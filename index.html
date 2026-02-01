@@ -119,93 +119,88 @@
     </div>
 
     <script>
-        // SIMPLE WORKING VERSION - No GitHub API, just localStorage
+        // CONFIGURATION
+        const YOUR_VERCEL_URL = "https://script-one-zeta.vercel.app";
+        const GITHUB_USERNAME = 'ZH0ST';
+        const REPO_NAME = 'script';
+        
         const WHITELIST_DATA_KEY = 'whitelist_data';
         let currentData = null;
         
         // Load initial data
-        function loadInitialData() {
-            // Try to load from localStorage first
-            const savedData = localStorage.getItem(WHITELIST_DATA_KEY);
+        async function loadInitialData() {
+            console.log('Loading whitelist data...');
             
-            if (savedData) {
-                try {
-                    currentData = JSON.parse(savedData);
-                    console.log('Loaded from localStorage:', currentData);
-                    updateDisplay();
-                    showStatus('Loaded from local storage', 'success');
-                } catch (e) {
-                    console.error('Error parsing saved data:', e);
-                    createDefaultData();
+            // Try YOUR API endpoint first (most reliable)
+            try {
+                const apiResponse = await fetch(`${YOUR_VERCEL_URL}/api/check?userId=test`);
+                if (apiResponse.ok) {
+                    // API is working, now try to get full list
+                    await loadFromGitHub();
+                    return;
                 }
-            } else {
-                // Try to fetch from GitHub
-                fetchFromGitHub();
+            } catch (apiError) {
+                console.log('API test failed, trying direct GitHub...');
             }
+            
+            // Fallback to GitHub
+            await loadFromGitHub();
         }
         
-        // Fetch from GitHub
-        async function fetchFromGitHub() {
-            const GITHUB_URL = 'https://raw.githubusercontent.com/ZH0ST/script/main/whitelisted-users.json';
+        // Load from GitHub
+        async function loadFromGitHub() {
+            const GITHUB_URL = `https://raw.githubusercontent.com/${GITHUB_USERNAME}/${REPO_NAME}/main/whitelisted-users.json`;
             
             try {
                 document.getElementById('apiStatus').textContent = '🔄 Fetching...';
                 document.getElementById('apiStatus').style.color = '#ffaa00';
                 
-                // Add cache busting
                 const response = await fetch(GITHUB_URL + '?t=' + Date.now());
                 
                 if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}`);
+                    throw new Error(`GitHub HTTP ${response.status}`);
                 }
                 
                 const data = await response.json();
-                console.log('Fetched from GitHub:', data);
+                console.log('Successfully loaded from GitHub:', data);
                 
                 // Validate data
                 if (!data.users || !Array.isArray(data.users)) {
-                    throw new Error('Invalid data format');
+                    throw new Error('Invalid data format from GitHub');
                 }
                 
                 currentData = data;
                 localStorage.setItem(WHITELIST_DATA_KEY, JSON.stringify(data));
                 
                 updateDisplay();
-                showStatus('Data loaded from GitHub!', 'success');
+                showStatus('✅ Data loaded from GitHub!', 'success');
+                
+                document.getElementById('apiStatus').textContent = '🟢 Online';
+                document.getElementById('apiStatus').style.color = '#00ff00';
                 
             } catch (error) {
-                console.warn('GitHub fetch failed:', error);
+                console.error('GitHub load failed:', error);
                 
-                // Try to fetch via our API as backup
-                try {
-                    const apiResponse = await fetch('/api/check?userId=10428355122');
-                    if (apiResponse.ok) {
-                        const apiData = await apiResponse.json();
-                        
-                        // Create data structure from API response
-                        currentData = {
-                            users: [{
-                                userId: apiData.userId,
-                                username: apiData.username,
-                                profileImage: apiData.profileImage,
-                                addedAt: apiData.addedAt,
-                                addedBy: 'admin'
-                            }],
-                            lastUpdated: new Date().toISOString()
-                        };
-                        
-                        localStorage.setItem(WHITELIST_DATA_KEY, JSON.stringify(currentData));
+                // Try to load from localStorage
+                const savedData = localStorage.getItem(WHITELIST_DATA_KEY);
+                if (savedData) {
+                    try {
+                        currentData = JSON.parse(savedData);
                         updateDisplay();
-                        showStatus('Loaded from API backup', 'success');
+                        showStatus('Loaded from local cache', 'success');
+                        document.getElementById('apiStatus').textContent = '🟡 Local Cache';
+                        document.getElementById('apiStatus').style.color = '#ffaa00';
                         return;
+                    } catch (e) {
+                        console.error('Local cache error:', e);
                     }
-                } catch (apiError) {
-                    console.warn('API backup also failed:', apiError);
                 }
                 
-                // Last resort: create default data
+                // Create default data
                 createDefaultData();
-                showStatus('Using local data - GitHub unreachable', 'error');
+                showStatus('⚠️ Using default data - check GitHub file', 'error');
+                document.getElementById('apiStatus').textContent = '🔴 Offline';
+                document.getElementById('apiStatus').style.color = '#ff5555';
             }
         }
         
@@ -217,8 +212,8 @@
                         userId: "10428355122",
                         username: "YourUsername",
                         profileImage: "https://tr.rbxcdn.com/10428355122/150/150/Image/Png",
-                        addedAt: "2024-01-01T00:00:00.000Z",
-                        addedBy: "admin"
+                        addedAt: new Date().toISOString(),
+                        addedBy: "system"
                     }
                 ],
                 lastUpdated: new Date().toISOString()
@@ -235,8 +230,6 @@
             // Update stats
             document.getElementById('totalUsers').textContent = currentData.users.length;
             document.getElementById('lastUpdated').textContent = new Date(currentData.lastUpdated).toLocaleString();
-            document.getElementById('apiStatus').textContent = '🟢 Online';
-            document.getElementById('apiStatus').style.color = '#00ff00';
             
             // Display users
             displayUsers(currentData.users);
@@ -276,7 +269,7 @@
         }
         
         // Add user to whitelist
-        function addUser() {
+        async function addUser() {
             const userId = document.getElementById('userId').value.trim();
             const username = document.getElementById('username').value.trim();
             
@@ -332,8 +325,8 @@
                 
                 showStatus(`✅ Added ${username} (${userId}) to whitelist!`, 'success');
                 
-                // Try to update GitHub via API
-                updateGitHub();
+                // Try to update GitHub via our API
+                await updateGitHubViaAPI();
                 
             } catch (error) {
                 console.error('Error adding user:', error);
@@ -347,7 +340,7 @@
         }
         
         // Remove user from whitelist
-        function removeUser(userId) {
+        async function removeUser(userId) {
             if (!confirm(`Remove user ID ${userId} from whitelist?`)) return;
             
             if (!currentData) return;
@@ -370,15 +363,19 @@
             showStatus(`Removed ${removedUser.username || 'user'} (${userId}) from whitelist`, 'success');
             
             // Try to update GitHub
-            updateGitHub();
+            await updateGitHubViaAPI();
         }
         
-        // Update GitHub (optional - via your API)
-        async function updateGitHub() {
+        // Update GitHub via API (if you create this endpoint later)
+        async function updateGitHubViaAPI() {
             try {
-                // This would require a backend API to update GitHub
-                // For now, we'll just save locally
-                console.log('Data saved locally. GitHub update requires backend API.');
+                // This would update your GitHub file
+                // For now, just note that changes are local
+                console.log('Changes saved locally. To update GitHub, you need a backend API.');
+                
+                // You could create an API endpoint later at:
+                // ${YOUR_VERCEL_URL}/api/update-whitelist
+                
             } catch (error) {
                 console.log('GitHub update not configured');
             }
@@ -402,15 +399,28 @@
             const usernameField = document.getElementById('username');
             
             if (userId && !usernameField.value) {
-                usernameField.placeholder = "Enter username for ID: " + userId;
+                // Try to get username from Roblox API
+                try {
+                    const response = await fetch(`https://users.roblox.com/v1/users/${userId}`);
+                    if (response.ok) {
+                        const data = await response.json();
+                        usernameField.value = data.name || '';
+                        if (data.name) {
+                            showStatus(`✅ Found username: ${data.name}`, 'success');
+                        }
+                    }
+                } catch (error) {
+                    // User can enter manually
+                    usernameField.placeholder = "Enter username for ID: " + userId;
+                }
             }
         });
         
         // Load data on page load
         document.addEventListener('DOMContentLoaded', loadInitialData);
         
-        // Auto-refresh GitHub data every 30 seconds
-        setInterval(fetchFromGitHub, 30000);
+        // Auto-refresh every 30 seconds
+        setInterval(loadFromGitHub, 30000);
         
         // Export for console debugging
         window.WhitelistDashboard = {
@@ -418,8 +428,10 @@
             data: () => currentData,
             addUser: addUser,
             removeUser: removeUser,
-            saveToGitHub: updateGitHub
+            apiUrl: YOUR_VERCEL_URL
         };
+        
+        console.log('Dashboard initialized for:', YOUR_VERCEL_URL);
     </script>
 </body>
 </html>
